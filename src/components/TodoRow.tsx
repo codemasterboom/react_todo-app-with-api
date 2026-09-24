@@ -1,26 +1,73 @@
 /* eslint-disable @typescript-eslint/no-unused-vars */
 /* eslint-disable jsx-a11y/label-has-associated-control */
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import cn from 'classnames';
 import { Todo } from '../types/Todo';
 
 type Props = {
   todo: Todo;
   isProcessing: boolean;
-  onDelete: () => void;
+  onDelete?: () => Promise<boolean | void>;
+  onToggle?: () => Promise<void>;
+  onUpdate?: (newTitle: string) => Promise<boolean | void>;
 };
 
-export const TodoRow: React.FC<Props> = ({ todo, isProcessing, onDelete }) => {
+export const TodoRow: React.FC<Props> = ({
+  todo,
+  isProcessing,
+  onDelete,
+  onToggle,
+  onUpdate,
+}) => {
   const [isEditing, setIsEditing] = useState<boolean>(false);
   const [newTodoTitle, setNewTodoTitle] = useState<string>(todo.title);
 
   const editInput = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (isEditing) {
+      editInput.current?.focus();
+    }
+  }, [isEditing]);
+
+  async function saveTitle() {
+    const normalizedNewTodoTitle = newTodoTitle.trim();
+
+    if (normalizedNewTodoTitle === todo.title) {
+      setIsEditing(false);
+
+      return;
+    }
+
+    const requestSucceeded = normalizedNewTodoTitle
+      ? await onUpdate?.(normalizedNewTodoTitle)
+      : await onDelete?.();
+
+    if (requestSucceeded !== false) {
+      setIsEditing(false);
+    }
+  }
+
+  function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    saveTitle();
+  }
+
+  function handleKeyUp(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === 'Escape') {
+      setNewTodoTitle(todo.title);
+      setIsEditing(false);
+    }
+  }
 
   return (
     <div
       data-cy="Todo"
       key={todo.id}
       className={cn('todo', { completed: todo.completed })}
+      onDoubleClick={() => {
+        setIsEditing(true);
+      }}
     >
       <label className="todo__status-label">
         <input
@@ -28,22 +75,41 @@ export const TodoRow: React.FC<Props> = ({ todo, isProcessing, onDelete }) => {
           type="checkbox"
           className="todo__status"
           checked={todo.completed}
+          onChange={onToggle}
         />
       </label>
 
-      <span data-cy="TodoTitle" className="todo__title">
-        {todo.title}
-      </span>
+      {isEditing ? (
+        <form onSubmit={event => handleSubmit(event)}>
+          <input
+            ref={editInput}
+            data-cy="TodoTitleField"
+            type="text"
+            className="todo__title-field"
+            placeholder="Empty todo will be deleted"
+            value={newTodoTitle}
+            onChange={event => setNewTodoTitle(event.target.value)}
+            onBlur={saveTitle}
+            onKeyUp={handleKeyUp}
+          />
+        </form>
+      ) : (
+        <>
+          <span data-cy="TodoTitle" className="todo__title">
+            {todo.title}
+          </span>
 
-      {/* Remove button appears only on hover */}
-      <button
-        type="button"
-        className="todo__remove"
-        data-cy="TodoDelete"
-        onClick={onDelete}
-      >
-        ×
-      </button>
+          {/* Remove button appears only on hover */}
+          <button
+            type="button"
+            className="todo__remove"
+            data-cy="TodoDelete"
+            onClick={onDelete}
+          >
+            ×
+          </button>
+        </>
+      )}
 
       {/* overlay will cover the todo while it is being deleted or updated */}
       <div

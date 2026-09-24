@@ -3,14 +3,20 @@
 import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import cn from 'classnames';
 import { UserWarning } from './UserWarning';
-import { addTodo, deleteTodo, getTodos, USER_ID } from './api/todos';
+import {
+  addTodo,
+  deleteTodo,
+  getTodos,
+  updateTodo,
+  USER_ID,
+} from './api/todos';
 import { Todo } from './types/Todo';
 import { FilterStatus } from './types/FilterStatus';
 import { TodoRow } from './components/TodoRow';
 
 export const App: React.FC = () => {
   const [todos, setTodos] = useState<Todo[]>([]);
-  const [isLoading, setIsLoading] = useState<boolean>(false);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
   const [newTodoTitle, setNewTodoTitle] = useState<string>('');
   const [tempTodo, setTempTodo] = useState<Todo | null>(null);
   const [processingIds, setProcessingIds] = useState<number[]>([]);
@@ -73,6 +79,11 @@ export const App: React.FC = () => {
     return todos.filter(currentTodo => currentTodo.completed === true).length;
   }, [todos]);
 
+  const areAllCompleted = useMemo(
+    () => todos.every(currentTodo => currentTodo.completed === true),
+    [todos],
+  );
+
   function handleOnSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const normalizedTitle = newTodoTitle.trim();
@@ -112,14 +123,18 @@ export const App: React.FC = () => {
   function handleOnDelete(todoId: number) {
     setProcessingIds(currentProcessingIds => [...currentProcessingIds, todoId]);
 
-    deleteTodo(todoId)
+    return deleteTodo(todoId)
       .then(() => {
         setTodos(currentTodos =>
           currentTodos.filter(currentTodo => currentTodo.id !== todoId),
         );
+
+        return true;
       })
       .catch(() => {
         showErrorMessage('Unable to delete a todo');
+
+        return false;
       })
       .finally(() => {
         setProcessingIds(currentProcessingIds =>
@@ -162,6 +177,104 @@ export const App: React.FC = () => {
     });
   }
 
+  function handleOnToggle(todo: Todo) {
+    setProcessingIds(currentProcessingIds => [
+      ...currentProcessingIds,
+      todo.id,
+    ]);
+
+    const updatedTodo = { ...todo, completed: !todo.completed };
+
+    return updateTodo(updatedTodo)
+      .then(patchedTodo => {
+        setTodos(currentTodos =>
+          currentTodos.map(currentTodo =>
+            currentTodo.id === patchedTodo.id ? patchedTodo : currentTodo,
+          ),
+        );
+      })
+      .catch(() => {
+        showErrorMessage('Unable to update a todo');
+      })
+      .finally(() => {
+        setProcessingIds(currentProcessingIds =>
+          currentProcessingIds.filter(currentId => currentId !== todo.id),
+        );
+        inputRef.current?.focus();
+      });
+  }
+
+  function handleOnRename(todo: Todo, newTitle: string) {
+    setProcessingIds(currentProcessingIds => [
+      ...currentProcessingIds,
+      todo.id,
+    ]);
+
+    const updatedTodo = { ...todo, title: newTitle.trim() };
+
+    return updateTodo(updatedTodo)
+      .then(patchedTodo => {
+        setTodos(currentTodos =>
+          currentTodos.map(currentTodo =>
+            currentTodo.id === patchedTodo.id ? patchedTodo : currentTodo,
+          ),
+        );
+
+        return true;
+      })
+      .catch(() => {
+        showErrorMessage('Unable to update a todo');
+
+        return false;
+      })
+      .finally(() => {
+        setProcessingIds(currentProcessingIds =>
+          currentProcessingIds.filter(currentId => currentId !== todo.id),
+        );
+        inputRef.current?.focus();
+      });
+  }
+
+  function handleToggleAll() {
+    const targetStatus = !areAllCompleted;
+
+    const todosToUpdate = todos.filter(
+      currentTodo => currentTodo.completed !== targetStatus,
+    );
+
+    todosToUpdate.forEach(updatingTodo => {
+      setProcessingIds(currentProcessingIds => [
+        ...currentProcessingIds,
+        updatingTodo.id,
+      ]);
+
+      const updatedTodo = {
+        ...updatingTodo,
+        completed: !updatingTodo.completed,
+      };
+
+      updateTodo(updatedTodo)
+        .then(patchedTodo => {
+          setTodos(currentTodos =>
+            currentTodos.map(currentTodo =>
+              currentTodo.id === patchedTodo.id ? patchedTodo : currentTodo,
+            ),
+          );
+        })
+        .catch(() => {
+          showErrorMessage('Unable to update a todo');
+        })
+        .finally(() => {
+          setProcessingIds(currentProcessingIds =>
+            currentProcessingIds.filter(
+              currentId => currentId !== updatingTodo.id,
+            ),
+          );
+          inputRef.current?.focus();
+        });
+    });
+  }
+
   if (!USER_ID) {
     return <UserWarning />;
   }
@@ -173,11 +286,14 @@ export const App: React.FC = () => {
       <div className="todoapp__content">
         <header className="todoapp__header">
           {/* this button should have `active` class only if all todos are completed */}
-          <button
-            type="button"
-            className="todoapp__toggle-all active"
-            data-cy="ToggleAllButton"
-          />
+          {!isLoading && todos.length > 0 && (
+            <button
+              type="button"
+              className={cn('todoapp__toggle-all', { active: areAllCompleted })}
+              data-cy="ToggleAllButton"
+              onClick={handleToggleAll}
+            />
+          )}
 
           {/* Add a todo on form submit */}
           <form onSubmit={handleOnSubmit}>
@@ -201,43 +317,13 @@ export const App: React.FC = () => {
               todo={currentTodo}
               isProcessing={processingIds.includes(currentTodo.id)}
               onDelete={() => handleOnDelete(currentTodo.id)}
+              onToggle={() => handleOnToggle(currentTodo)}
+              onUpdate={newTitle => handleOnRename(currentTodo, newTitle)}
             />
           ))}
 
           {tempTodo && (
-            <div
-              data-cy="Todo"
-              key={tempTodo.id}
-              className={cn('todo', { completed: tempTodo.completed })}
-            >
-              <label className="todo__status-label">
-                <input
-                  data-cy="TodoStatus"
-                  type="checkbox"
-                  className="todo__status"
-                  checked={tempTodo.completed}
-                />
-              </label>
-
-              <span data-cy="TodoTitle" className="todo__title">
-                {tempTodo.title}
-              </span>
-
-              {/* Remove button appears only on hover */}
-              <button
-                type="button"
-                className="todo__remove"
-                data-cy="TodoDelete"
-              >
-                ×
-              </button>
-
-              {/* overlay will cover the todo while it is being deleted or updated */}
-              <div data-cy="TodoLoader" className="modal overlay is-active">
-                <div className="modal-background has-background-white-ter" />
-                <div className="loader" />
-              </div>
-            </div>
+            <TodoRow key={tempTodo.id} todo={tempTodo} isProcessing={true} />
           )}
         </section>
 
