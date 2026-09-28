@@ -43,7 +43,7 @@ export const TodoRow: React.FC<Props> = ({
       ? await onUpdate?.(normalizedNewTodoTitle)
       : await onDelete?.();
 
-    if (requestSucceeded !== false) {
+    if (requestSucceeded) {
       setIsEditing(false);
     }
   }
@@ -65,9 +65,6 @@ export const TodoRow: React.FC<Props> = ({
       data-cy="Todo"
       key={todo.id}
       className={cn('todo', { completed: todo.completed })}
-      onDoubleClick={() => {
-        setIsEditing(true);
-      }}
     >
       <label className="todo__status-label">
         <input
@@ -83,6 +80,7 @@ export const TodoRow: React.FC<Props> = ({
         <form onSubmit={event => handleSubmit(event)}>
           <input
             ref={editInput}
+            autoFocus
             data-cy="TodoTitleField"
             type="text"
             className="todo__title-field"
@@ -95,7 +93,13 @@ export const TodoRow: React.FC<Props> = ({
         </form>
       ) : (
         <>
-          <span data-cy="TodoTitle" className="todo__title">
+          <span
+            data-cy="TodoTitle"
+            className="todo__title"
+            onDoubleClick={() => {
+              setIsEditing(true);
+            }}
+          >
             {todo.title}
           </span>
 

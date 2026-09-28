@@ -13,6 +13,8 @@ import {
 import { Todo } from './types/Todo';
 import { FilterStatus } from './types/FilterStatus';
 import { TodoRow } from './components/TodoRow';
+import { ErrorNotificator } from './components/ErrorNotificator';
+import { TransitionGroup, CSSTransition } from 'react-transition-group';
 
 export const App: React.FC = () => {
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -55,19 +57,15 @@ export const App: React.FC = () => {
 
   useEffect(() => {
     inputRef.current?.focus();
-  }, [isLoading]);
+  }, [isLoading, todos]);
 
   const visibleTodos = useMemo(() => {
     return todos.filter(currentTodo => {
-      if (filter === FilterStatus.active) {
-        return !currentTodo.completed;
-      }
-
-      if (filter === FilterStatus.completed) {
-        return currentTodo.completed;
-      }
-
-      return true;
+      return (
+        filter === FilterStatus.all ||
+        (filter === FilterStatus.completed && currentTodo.completed) ||
+        (filter === FilterStatus.active && !currentTodo.completed)
+      );
     });
   }, [filter, todos]);
 
@@ -140,41 +138,15 @@ export const App: React.FC = () => {
         setProcessingIds(currentProcessingIds =>
           currentProcessingIds.filter(currentId => currentId !== todoId),
         );
-        inputRef.current?.focus();
       });
   }
 
   function handleClearCompleted() {
-    const completedTodos = todos.filter(
-      currentTodo => currentTodo.completed === true,
+    return Promise.allSettled(
+      todos
+        .filter(currentTodo => currentTodo.completed === true)
+        .map(completedTodo => handleOnDelete(completedTodo.id)),
     );
-
-    completedTodos.forEach(deletingTodo => {
-      setProcessingIds(currentProcessingIds => [
-        ...currentProcessingIds,
-        deletingTodo.id,
-      ]);
-
-      deleteTodo(deletingTodo.id)
-        .then(() => {
-          setTodos(currentTodos =>
-            currentTodos.filter(
-              currentTodo => currentTodo.id !== deletingTodo.id,
-            ),
-          );
-        })
-        .catch(() => {
-          showErrorMessage('Unable to delete a todo');
-        })
-        .finally(() => {
-          setProcessingIds(currentProcessingIds =>
-            currentProcessingIds.filter(
-              currentId => currentId !== deletingTodo.id,
-            ),
-          );
-          inputRef.current?.focus();
-        });
-    });
   }
 
   function handleOnToggle(todo: Todo) {
@@ -200,7 +172,6 @@ export const App: React.FC = () => {
         setProcessingIds(currentProcessingIds =>
           currentProcessingIds.filter(currentId => currentId !== todo.id),
         );
-        inputRef.current?.focus();
       });
   }
 
@@ -231,48 +202,17 @@ export const App: React.FC = () => {
         setProcessingIds(currentProcessingIds =>
           currentProcessingIds.filter(currentId => currentId !== todo.id),
         );
-        inputRef.current?.focus();
       });
   }
 
   function handleToggleAll() {
     const targetStatus = !areAllCompleted;
 
-    const todosToUpdate = todos.filter(
-      currentTodo => currentTodo.completed !== targetStatus,
+    return Promise.allSettled(
+      todos
+        .filter(currentTodo => currentTodo.completed !== targetStatus)
+        .map(updatedTodo => handleOnToggle(updatedTodo)),
     );
-
-    todosToUpdate.forEach(updatingTodo => {
-      setProcessingIds(currentProcessingIds => [
-        ...currentProcessingIds,
-        updatingTodo.id,
-      ]);
-
-      const updatedTodo = {
-        ...updatingTodo,
-        completed: !updatingTodo.completed,
-      };
-
-      updateTodo(updatedTodo)
-        .then(patchedTodo => {
-          setTodos(currentTodos =>
-            currentTodos.map(currentTodo =>
-              currentTodo.id === patchedTodo.id ? patchedTodo : currentTodo,
-            ),
-          );
-        })
-        .catch(() => {
-          showErrorMessage('Unable to update a todo');
-        })
-        .finally(() => {
-          setProcessingIds(currentProcessingIds =>
-            currentProcessingIds.filter(
-              currentId => currentId !== updatingTodo.id,
-            ),
-          );
-          inputRef.current?.focus();
-        });
-    });
   }
 
   if (!USER_ID) {
@@ -311,20 +251,34 @@ export const App: React.FC = () => {
         </header>
 
         <section className="todoapp__main" data-cy="TodoList">
-          {visibleTodos.map(currentTodo => (
-            <TodoRow
-              key={currentTodo.id}
-              todo={currentTodo}
-              isProcessing={processingIds.includes(currentTodo.id)}
-              onDelete={() => handleOnDelete(currentTodo.id)}
-              onToggle={() => handleOnToggle(currentTodo)}
-              onUpdate={newTitle => handleOnRename(currentTodo, newTitle)}
-            />
-          ))}
+          <TransitionGroup>
+            {visibleTodos.map(currentTodo => (
+              <CSSTransition
+                key={currentTodo.id}
+                timeout={300}
+                classNames="item"
+              >
+                <TodoRow
+                  key={currentTodo.id}
+                  todo={currentTodo}
+                  isProcessing={processingIds.includes(currentTodo.id)}
+                  onDelete={() => handleOnDelete(currentTodo.id)}
+                  onToggle={() => handleOnToggle(currentTodo)}
+                  onUpdate={newTitle => handleOnRename(currentTodo, newTitle)}
+                />
+              </CSSTransition>
+            ))}
 
-          {tempTodo && (
-            <TodoRow key={tempTodo.id} todo={tempTodo} isProcessing={true} />
-          )}
+            {tempTodo && (
+              <CSSTransition key={0} timeout={300} classNames="temp-item">
+                <TodoRow
+                  key={tempTodo.id}
+                  todo={tempTodo}
+                  isProcessing={true}
+                />
+              </CSSTransition>
+            )}
+          </TransitionGroup>
         </section>
 
         {/* Hide the footer if there are no todos */}
@@ -384,32 +338,10 @@ export const App: React.FC = () => {
         )}
       </div>
 
-      {/* DON'T use conditional rendering to hide the notification */}
-      {/* Add the 'hidden' class to hide the message smoothly */}
-      <div
-        data-cy="ErrorNotification"
-        className={cn(
-          'notification',
-          'is-danger',
-          'is-light',
-          'has-text-weight-normal',
-          { hidden: errorMessages.length === 0 },
-        )}
-      >
-        <button
-          data-cy="HideErrorButton"
-          type="button"
-          className="delete"
-          onClick={() => setErrorMessages([])}
-        />
-        {/* show only one message at a time */}
-        {errorMessages.map((msg, index) => (
-          <div key={index}>
-            {msg}
-            <br />
-          </div>
-        ))}
-      </div>
+      <ErrorNotificator
+        errorMessages={errorMessages}
+        onClose={() => setErrorMessages([])}
+      />
     </div>
   );
 };
